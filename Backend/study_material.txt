@@ -1,0 +1,19 @@
+=== Python Loops and Control Flow ===
+Python has two main types of loops: for loops and while loops.
+1. The 'for' loop: Iterates over a sequence (such as a list, tuple, dictionary, set, or string).
+2. The 'while' loop: Executes a block of code as long as a specified condition is True.
+3. The 'range()' function: Generates a sequence of numbers. By default, it starts from 0, increments by 1, and stops before a specified number. Example: range(5) generates 0, 1, 2, 3, 4.
+4. The 'break' statement: Used to exit or terminate the loop immediately, transferring program control to the statement after the loop.
+5. The 'continue' statement: Skips the remaining code in the current iteration of the loop and moves directly to the next iteration.
+
+=== Photosynthesis ===
+Photosynthesis is the process by which green plants and some other organisms use sunlight to synthesize nutrients from carbon dioxide and water.
+1. The chemical equation: 6CO2 + 6H2O + light energy -> C6H12O6 (glucose) + 6O2 (oxygen).
+2. Light-dependent reactions: Occur in the thylakoid membranes of the chloroplast. Chlorophyll absorbs sunlight, splitting water molecules to release oxygen, and generating ATP and NADPH.
+3. Calvin Cycle (Light-independent reactions): Occurs in the stroma of the chloroplast. It uses the ATP and NADPH generated in the light reactions, along with carbon dioxide, to produce glucose.
+
+=== Algebraic Equations ===
+An algebraic equation is a mathematical statement asserting the equality of two algebraic expressions.
+1. Variable: A symbol (usually a letter like x or y) representing an unknown value.
+2. Coefficient: The numerical factor multiplied by a variable (e.g., in 3x, the coefficient is 3).
+3. Balancing: Whatever operation is performed on one side of the equation must also be performed on the other side to maintain equality (e.g., adding, subtracting, multiplying, or dividing).
