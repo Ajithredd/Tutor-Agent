@@ -202,10 +202,10 @@ class HITLInterruptMiddleware(AgentMiddleware):
 
 class MultiAgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
+    topic: str
     curriculum: list[str]
     current_lesson_index: int
     needs_quiz: bool
-    topic: str
 
 def build_agent(
     checkpointer,
@@ -225,33 +225,49 @@ def build_agent(
     if limit_enabled:
         middleware_common.append(ModelCallLimitMiddleware(run_limit=10, exit_behavior="error"))
 
-    # Planner Agent: creates a curriculum
-    planner_agent = create_agent(
+    # 1. Greeting Agent: welcomes student, asks what topic they want to learn
+    greeter_agent = create_agent(
         model=model,
         tools=[],
-        system_prompt=SystemMessage(content="""You are a curriculum planner.
-Your job is to take the student's topic and create a numbered curriculum of exactly 3 topics.
-Output the curriculum clearly to the student, e.g.:
-'Here is our curriculum:
-1. topic A
-2. topic B
-3. topic C'"""),
+        system_prompt=SystemMessage(content="""You are an encouraging, expert AI tutor.
+The student has just greeted you or started a new session.
+Greet the student warmly and ask them what subject or topic they would like to learn today (for example: AI Agents, Python, Biology, Operating Systems, Math, etc.).
+Do not teach any lesson or ask quiz questions yet. Simply welcome them and ask for their desired learning topic."""),
         middleware=middleware_common
     )
 
-    # Tutor Agent: teaches/explains the current lesson
+    # 2. Planner Agent: creates a structured 3-part curriculum for the chosen topic
+    planner_agent = create_agent(
+        model=model,
+        tools=[],
+        system_prompt=SystemMessage(content="""You are a master curriculum planner.
+The student has chosen a topic to learn.
+Acknowledge their chosen topic enthusiastically and introduce a clear, structured 3-lesson curriculum for them.
+Format your response clearly:
+"Awesome! Let's learn **[Topic]**. Here is our 3-part learning curriculum:
+1. [Lesson 1 Title]: Brief description
+2. [Lesson 2 Title]: Brief description
+3. [Lesson 3 Title]: Brief description
+
+Let's begin with Lesson 1!"
+"""),
+        middleware=middleware_common
+    )
+
+    # 3. Tutor Agent: teaches/explains the current lesson
     from tools import explain_concept, retrieve_reference
     tutor_agent = create_agent(
         model=model,
         tools=[explain_concept, retrieve_reference],
         system_prompt=SystemMessage(content="""You are an expert tutor.
-Your job is to explain the current concept of the curriculum.
-Call explain_concept to teach the topic. Ground your explanation in reference materials.
-At the end of your response, offer a quiz question by saying 'Ready for a quick quiz?'"""),
+Your job is to clearly explain and teach the current lesson concept from the curriculum.
+Use `explain_concept` or `retrieve_reference` to ground your explanation.
+Explain the concepts engagingly with intuitive analogies and real-world examples.
+At the very end of your explanation, say: "Ready to test your understanding with a quick quiz?" and encourage the student."""),
         middleware=middleware_common
     )
 
-    # Examiner Agent: quizzes, grades, updates scores
+    # 4. Examiner Agent: quizzes, grades, updates scores
     from tools import generate_quiz_question, grade_answer
     middleware_examiner = list(middleware_common)
     middleware_examiner.append(AnswerGuardrailMiddleware(enabled=guardrail_enabled))
@@ -262,52 +278,71 @@ At the end of your response, offer a quiz question by saying 'Ready for a quick 
         model=model,
         tools=[generate_quiz_question, grade_answer],
         system_prompt=SystemMessage(content="""You are an examiner agent.
-Your job is to test the student's understanding.
-Call generate_quiz_question to ask a quiz question.
-When the student responds, call grade_answer to grade it.
-If they are correct, praise them. If they are incorrect, explain why."""),
+Your job is to test the student's understanding of the lesson.
+Call `generate_quiz_question` to ask a high-quality multiple choice question on the lesson.
+When the student provides their answer (e.g. 'I choose answer option A' or 'A'), invoke `grade_answer` to evaluate it accurately.
+If correct, congratulate them on mastering this lesson!
+If incorrect, provide helpful encouragement and explain the concept clearly."""),
         middleware=middleware_examiner
     )
 
-    # 1. Planner Node
+    # Node: Greeter
+    def greeter_node(state: MultiAgentState, config: RunnableConfig):
+        res = greeter_agent.invoke(state, config)
+        return {
+            "messages": res.get("messages", []),
+            "topic": "",
+            "curriculum": [],
+            "current_lesson_index": 0,
+            "needs_quiz": False
+        }
+
+    # Node: Planner
     def planner_node(state: MultiAgentState, config: RunnableConfig):
         messages = state.get("messages", [])
-        user_msg = next((msg.content for msg in reversed(messages) if isinstance(msg, HumanMessage)), "Python loops")
+        user_msg = next((msg.content for msg in reversed(messages) if isinstance(msg, HumanMessage)), "AI Agents")
         
+        # Invoke planner agent
         res = planner_agent.invoke(state, config)
         
-        curriculum = []
+        # Extract structured 3 topics
         prompt = (
-            f"Extract a JSON list of the 3 curriculum topics from this curriculum text:\n"
+            f"From this curriculum text, extract a JSON list of the 3 lesson titles:\n"
             f"\"\"\"{res.get('messages', [])[-1].content}\"\"\"\n"
-            f"Only return a valid JSON list of strings (e.g. [\"A\", \"B\", \"C\"]), nothing else."
+            f"Return ONLY a valid JSON list of 3 strings (e.g. [\"Lesson 1\", \"Lesson 2\", \"Lesson 3\"])."
         )
-        parse_res = model.invoke(prompt)
         try:
+            parse_res = model.invoke(prompt)
             content = parse_res.content.strip()
-            if content.startswith("```"):
+            if "```" in content:
                 content = content.split("```")[1]
                 if content.startswith("json"):
                     content = content[4:]
             curriculum = json.loads(content.strip())
+            if not isinstance(curriculum, list) or len(curriculum) < 2:
+                curriculum = [f"{user_msg} Fundamentals", f"{user_msg} Core Architecture", f"{user_msg} Advanced Applications"]
         except Exception:
-            curriculum = ["Basics", "Intermediate", "Advanced"]
+            curriculum = [f"{user_msg} Fundamentals", f"{user_msg} Core Architecture", f"{user_msg} Advanced Applications"]
             
         return {
             "messages": res.get("messages", []),
+            "topic": user_msg,
             "curriculum": curriculum,
             "current_lesson_index": 0,
-            "needs_quiz": False,
-            "topic": user_msg
+            "needs_quiz": False
         }
 
-    # 2. Tutor Node
+    # Node: Tutor (Teaches current lesson)
     def tutor_node(state: MultiAgentState, config: RunnableConfig):
         curriculum = state.get("curriculum", [])
         index = state.get("current_lesson_index", 0)
-        concept = curriculum[index] if index < len(curriculum) else "General"
+        topic = state.get("topic", "General")
+        concept = curriculum[index] if index < len(curriculum) else f"{topic} Overview"
         
-        guide_msg = SystemMessage(content=f"You are teaching Lesson {index+1}: '{concept}'. Explain this concept now.")
+        guide_msg = SystemMessage(
+            content=f"You are teaching Lesson {index+1} of {len(curriculum)}: '{concept}' for the topic '{topic}'. "
+                    f"Teach this lesson clearly and thoroughly. At the end, ask the student if they are ready for a quiz."
+        )
         temp_state = {**state, "messages": [*state.get("messages", []), guide_msg]}
         
         res = tutor_agent.invoke(temp_state, config)
@@ -316,11 +351,12 @@ If they are correct, praise them. If they are incorrect, explain why."""),
             "needs_quiz": True
         }
 
-    # 3. Examiner Node
+    # Node: Examiner (Generates quiz or grades answer)
     def examiner_node(state: MultiAgentState, config: RunnableConfig):
         curriculum = state.get("curriculum", [])
         index = state.get("current_lesson_index", 0)
-        concept = curriculum[index] if index < len(curriculum) else "General"
+        topic = state.get("topic", "General")
+        concept = curriculum[index] if index < len(curriculum) else topic
         
         thread_id = config.get("configurable", {}).get("thread_id", "default")
         profile = db_get_student_profile(thread_id)
@@ -330,46 +366,85 @@ If they are correct, praise them. If they are incorrect, explain why."""),
         adaptive_msg = ""
         if topic_profile.get("incorrect", 0) > topic_profile.get("correct", 0):
             difficulty = "easy"
-            adaptive_msg = f"GUIDELINE: The student struggled with '{concept}' previously. You MUST ask an easy question and mention: 'You struggled with this topic, so let's try an easier question to practice!'"
+            adaptive_msg = f"NOTE: The student struggled with '{concept}' previously. Generate an easy question and give extra encouragement."
             
-        guide_msg = SystemMessage(content=f"Test the student's understanding of '{concept}'. Ask a {difficulty} difficulty question. {adaptive_msg}")
+        guide_msg = SystemMessage(
+            content=f"You are evaluating Lesson {index+1}: '{concept}'. "
+                    f"If a question needs to be asked, generate a {difficulty} question on '{concept}'. "
+                    f"If the student just submitted an answer, grade it using grade_answer. {adaptive_msg}"
+        )
         temp_state = {**state, "messages": [*state.get("messages", []), guide_msg]}
         
         res = examiner_agent.invoke(temp_state, config)
         
+        # Check if an answer was graded
+        graded = False
         is_correct = False
         for msg in reversed(res.get("messages", [])):
             if isinstance(msg, ToolMessage) and msg.name == "grade_answer":
+                graded = True
                 try:
                     is_correct = json.loads(msg.content).get("correct", False)
                 except Exception:
                     pass
                 break
                 
-        if is_correct:
-            return {
-                "messages": res.get("messages", []),
-                "current_lesson_index": index + 1,
-                "needs_quiz": False
-            }
+        if graded:
+            if is_correct:
+                next_index = index + 1
+                return {
+                    "messages": res.get("messages", []),
+                    "current_lesson_index": next_index,
+                    "needs_quiz": False
+                }
+            else:
+                # Keep on current lesson until mastered or retried
+                return {
+                    "messages": res.get("messages", []),
+                    "needs_quiz": True
+                }
         else:
             return {
                 "messages": res.get("messages", []),
                 "needs_quiz": True
             }
 
-    # Routing logic
+    # Router logic
     def route_next(state: MultiAgentState):
+        messages = state.get("messages", [])
+        last_human = next((msg.content for msg in reversed(messages) if isinstance(msg, HumanMessage)), "").strip()
+        last_human_lower = last_human.lower()
+        
+        # Check for simple greetings
+        greetings = ["hi", "hey", "hello", "good morning", "good evening", "howdy", "start", "restart"]
+        is_simple_greeting = last_human_lower in greetings or any(last_human_lower.startswith(g + " ") for g in ["hi", "hey", "hello"]) and len(last_human.split()) <= 3
+        
+        # If no topic has been established yet
+        if not state.get("topic"):
+            if is_simple_greeting:
+                return "greeter"
+            else:
+                # User provided their desired topic (e.g. "I want to learn AI Agents" or "Python")
+                return "planner"
+                
+        # If curriculum is empty or not yet initialized
         if not state.get("curriculum"):
             return "planner"
+            
+        # Check if all lessons are completed
         if state.get("current_lesson_index", 0) >= len(state.get("curriculum", [])):
             return "end"
+            
+        # Check if the student needs a quiz or just answered a quiz
         if state.get("needs_quiz"):
             return "examiner"
+            
+        # Otherwise, teach the next lesson
         return "tutor"
 
     # Construct the Parent Graph
     builder = StateGraph(MultiAgentState)
+    builder.add_node("greeter", greeter_node)
     builder.add_node("planner", planner_node)
     builder.add_node("tutor", tutor_node)
     builder.add_node("examiner", examiner_node)
@@ -378,6 +453,7 @@ If they are correct, praise them. If they are incorrect, explain why."""),
         START,
         route_next,
         {
+            "greeter": "greeter",
             "planner": "planner",
             "tutor": "tutor",
             "examiner": "examiner",
@@ -385,6 +461,7 @@ If they are correct, praise them. If they are incorrect, explain why."""),
         }
     )
     
+    builder.add_edge("greeter", END)
     builder.add_edge("planner", END)
     builder.add_edge("tutor", END)
     builder.add_edge("examiner", END)

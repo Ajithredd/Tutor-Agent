@@ -153,28 +153,34 @@ export default function ObservabilityPanel({
         {activeTab === 'graph' && (
           <div className="graph-flow-view">
             <div className="graph-diagram">
+              <div className="graph-node-box greeter-node">
+                <div className="node-badge">Node 1: Welcome</div>
+                <h4>Greeter Agent</h4>
+                <p>Welcomes student warmly & prompts for topic selection</p>
+              </div>
+              <div className="graph-arrow">↓ (Topic Chosen)</div>
               <div className="graph-node-box planner-node">
-                <div className="node-badge">Node 1</div>
+                <div className="node-badge">Node 2: Curriculum</div>
                 <h4>Curriculum Planner</h4>
-                <p>Builds 3-step personalized curriculum</p>
+                <p>Generates structured 3-part module/lesson plan</p>
               </div>
-              <div className="graph-arrow">↓</div>
+              <div className="graph-arrow">↓ (Teach Lesson)</div>
               <div className="graph-node-box tutor-node">
-                <div className="node-badge">Node 2</div>
+                <div className="node-badge">Node 3: Instruction</div>
                 <h4>Tutor Explainer (RAG)</h4>
-                <p>Retrieves <code>study_material.txt</code> and explains concept</p>
+                <p>Teaches current lesson & grounds in reference knowledge</p>
               </div>
-              <div className="graph-arrow">↓</div>
+              <div className="graph-arrow">↓ (Evaluate Lesson)</div>
               <div className="graph-node-box examiner-node">
-                <div className="node-badge">Node 3</div>
+                <div className="node-badge">Node 4: Assessment</div>
                 <h4>Examiner & Evaluator</h4>
-                <p>Generates quiz, guardrails answer, grades with HITL pause</p>
+                <p>Generates quiz, evaluates answers, & updates scores</p>
               </div>
-              <div className="graph-arrow">↓ (Adaptive Loop)</div>
+              <div className="graph-arrow">↓ (Progress / Memory Loop)</div>
               <div className="graph-node-box memory-node">
                 <div className="node-badge">State & SQLite</div>
                 <h4>AsyncSqliteSaver & Profiles</h4>
-                <p>Persists checkpoints, mastery scores & weak spots</p>
+                <p>Advances to next lesson upon mastery or adapts difficulty</p>
               </div>
             </div>
           </div>
