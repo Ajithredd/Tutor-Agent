@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 import asyncio
 from typing import AsyncGenerator
 from dotenv import load_dotenv
@@ -18,9 +19,31 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 load_dotenv()
 
+def _clear_thread_checkpoints(thread_id: str):
+    """Delete all checkpoint data for a thread to allow a fresh start."""
+    try:
+        conn = sqlite3.connect("checkpoints.db")
+        conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+        conn.execute("DELETE FROM checkpoint_writes WHERE thread_id = ?", (thread_id,))
+        conn.execute("DELETE FROM checkpoint_blobs WHERE thread_id = ?", (thread_id,))
+        conn.commit()
+        conn.close()
+        print(f"[Server] Cleared checkpoints for thread {thread_id}")
+    except Exception as e:
+        print(f"[Server] Failed to clear checkpoints: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Setup AsyncSqliteSaver as an async context manager during app lifecycle
+    # Auto-cleanup oversized checkpoint DB on startup (prevents stale 1GB+ files)
+    try:
+        db_path = "checkpoints.db"
+        if os.path.exists(db_path) and os.path.getsize(db_path) > 50_000_000:
+            os.remove(db_path)
+            print("[Server] Cleared oversized checkpoints.db on startup")
+    except Exception:
+        pass
+
     async with AsyncSqliteSaver.from_conn_string("checkpoints.db") as checkpointer:
         app.state.agent = build_agent(checkpointer)
         yield
@@ -60,7 +83,15 @@ async def chat_stream(request: ChatRequest, fastapi_request: Request):
             is_interrupted = len(state.next) > 0
         except Exception:
             is_interrupted = False
-            
+
+        # ── Greeting detection: prevent resuming stale interrupted graphs ──
+        from agent import _is_greeting
+        if is_interrupted and _is_greeting(request.message):
+            # Clear the stale checkpoint so the graph starts fresh
+            await asyncio.to_thread(_clear_thread_checkpoints, thread_id)
+            is_interrupted = False
+            print(f"[Server] Greeting detected on interrupted thread {thread_id} — cleared stale state")
+
         if is_interrupted:
             # Resume the graph with the student's answer
             inputs = Command(resume=request.message)
@@ -121,7 +152,7 @@ async def chat_stream(request: ChatRequest, fastapi_request: Request):
 
                 if kind == "on_chain_start":
                     c_name = event.get("name", "")
-                    if node_name or c_name in ["planner", "tutor", "examiner", "LangGraph"]:
+                    if node_name or c_name in ["greeter", "planner", "tutor", "examiner", "completion", "LangGraph"]:
                         yield {
                             "event": "trace",
                             "data": json.dumps({
@@ -134,7 +165,7 @@ async def chat_stream(request: ChatRequest, fastapi_request: Request):
 
                 elif kind == "on_chain_end":
                     c_name = event.get("name", "")
-                    if node_name or c_name in ["planner", "tutor", "examiner", "LangGraph"]:
+                    if node_name or c_name in ["greeter", "planner", "tutor", "examiner", "completion", "LangGraph"]:
                         yield {
                             "event": "trace",
                             "data": json.dumps({
@@ -159,7 +190,7 @@ async def chat_stream(request: ChatRequest, fastapi_request: Request):
 
                 elif kind == "on_chat_model_stream":
                     tags = event.get("tags", [])
-                    if "seq:step:1" in tags or node_name in ["agent", "planner", "tutor", "examiner"] or not tags:
+                    if "seq:step:1" in tags or node_name in ["agent", "greeter", "planner", "tutor", "examiner", "completion"] or not tags:
                         chunk = event.get("data", {}).get("chunk")
                         if chunk and hasattr(chunk, "content") and chunk.content:
                             content = chunk.content
@@ -253,6 +284,15 @@ async def chat_stream(request: ChatRequest, fastapi_request: Request):
             }
 
     return EventSourceResponse(event_generator())
+
+
+@app.post("/reset")
+async def reset_session(request: ChatRequest):
+    """Clear checkpoint state for a thread so the frontend can start a fresh session."""
+    thread_id = request.thread_id
+    await asyncio.to_thread(_clear_thread_checkpoints, thread_id)
+    return {"status": "ok", "thread_id": thread_id}
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))

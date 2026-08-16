@@ -15,7 +15,7 @@ function getThreadId(): string {
 }
 
 export default function App() {
-  const [threadId] = useState<string>(getThreadId);
+  const [threadId, setThreadId] = useState<string>(getThreadId);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeMessage, setActiveMessage] = useState<Message | null>(null);
   const [currentStatus, setCurrentStatus] = useState<StatusData | null>(null);
@@ -26,6 +26,30 @@ export default function App() {
 
   const messageQueue = useRef<string[]>([]);
   const activeMessageRef = useRef<Message | null>(null);
+
+  // ── Session reset ──
+  const startNewSession = async () => {
+    // Clear backend checkpoint for the old thread
+    try {
+      await fetch('http://localhost:8000/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: '', thread_id: threadId }),
+      });
+    } catch (_) { /* ignore */ }
+
+    const newId = crypto.randomUUID();
+    localStorage.setItem('tutor_agent_thread_id', newId);
+    setThreadId(newId);
+    setMessages([]);
+    setActiveMessage(null);
+    setCurrentStatus(null);
+    setIsStreaming(false);
+    setTraces([]);
+    setStudentProfile(null);
+    messageQueue.current = [];
+    activeMessageRef.current = null;
+  };
 
   useEffect(() => {
     activeMessageRef.current = activeMessage;
@@ -252,13 +276,22 @@ export default function App() {
             <h1>LangChain Tutor Agent</h1>
             <span className="thread-badge">Thread: {threadId.slice(0, 8)}...</span>
           </div>
-          <button
-            className={`observability-toggle-btn ${isObservabilityOpen ? 'active' : ''}`}
-            onClick={() => setIsObservabilityOpen(!isObservabilityOpen)}
-          >
-            📊 {isObservabilityOpen ? 'Hide Tracing' : 'Show Tracing'}
-            {traces.length > 0 && <span className="trace-count-pill">{traces.length}</span>}
-          </button>
+          <div className="header-actions">
+            <button
+              className="new-chat-btn"
+              onClick={startNewSession}
+              title="Start a fresh learning session"
+            >
+              ✨ New Chat
+            </button>
+            <button
+              className={`observability-toggle-btn ${isObservabilityOpen ? 'active' : ''}`}
+              onClick={() => setIsObservabilityOpen(!isObservabilityOpen)}
+            >
+              📊 {isObservabilityOpen ? 'Hide Tracing' : 'Show Tracing'}
+              {traces.length > 0 && <span className="trace-count-pill">{traces.length}</span>}
+            </button>
+          </div>
         </header>
 
         <ChatWindow

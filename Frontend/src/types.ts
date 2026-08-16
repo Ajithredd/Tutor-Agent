@@ -17,6 +17,17 @@ export interface ToolResult {
   output: QuizQuestionData | GradeBadgeData | string | any;
 }
 
+export interface StatusData {
+  tool: string;
+  phase: string;
+}
+
+export interface InterruptData {
+  action?: string;
+  prompt?: string;
+  [key: string]: any;
+}
+
 export interface TraceEvent {
   id: string;
   type: 'node_start' | 'node_end' | 'llm_start' | 'tool_start' | 'tool_end';
