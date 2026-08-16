@@ -114,11 +114,52 @@ async def chat_stream(request: ChatRequest, fastapi_request: Request):
         try:
             async for event in agent.astream_events(inputs, config=config, version="v2"):
                 kind = event.get("event")
-                if kind == "on_chat_model_stream":
-                    # Ignore inner model streams originating from tool calls (e.g. explain_concept or quiz generation inside tool)
+                metadata = event.get("metadata", {})
+                run_id = event.get("run_id", "")
+                parent_ids = event.get("parent_ids", [])
+                node_name = metadata.get("langgraph_node") or metadata.get("checkpoint_ns", "")
+
+                if kind == "on_chain_start":
+                    c_name = event.get("name", "")
+                    if node_name or c_name in ["planner", "tutor", "examiner", "LangGraph"]:
+                        yield {
+                            "event": "trace",
+                            "data": json.dumps({
+                                "type": "node_start",
+                                "node": node_name or c_name,
+                                "run_id": run_id,
+                                "timestamp": datetime.now().strftime("%H:%M:%S")
+                            })
+                        }
+
+                elif kind == "on_chain_end":
+                    c_name = event.get("name", "")
+                    if node_name or c_name in ["planner", "tutor", "examiner", "LangGraph"]:
+                        yield {
+                            "event": "trace",
+                            "data": json.dumps({
+                                "type": "node_end",
+                                "node": node_name or c_name,
+                                "run_id": run_id,
+                                "timestamp": datetime.now().strftime("%H:%M:%S")
+                            })
+                        }
+
+                elif kind == "on_chat_model_start":
+                    model_name = event.get("name", "LLM")
+                    yield {
+                        "event": "trace",
+                        "data": json.dumps({
+                            "type": "llm_start",
+                            "model": model_name,
+                            "node": node_name,
+                            "timestamp": datetime.now().strftime("%H:%M:%S")
+                        })
+                    }
+
+                elif kind == "on_chat_model_stream":
                     tags = event.get("tags", [])
-                    metadata = event.get("metadata", {})
-                    if "seq:step:1" in tags or metadata.get("langgraph_node") == "agent":
+                    if "seq:step:1" in tags or node_name in ["agent", "planner", "tutor", "examiner"] or not tags:
                         chunk = event.get("data", {}).get("chunk")
                         if chunk and hasattr(chunk, "content") and chunk.content:
                             content = chunk.content
@@ -142,16 +183,27 @@ async def chat_stream(request: ChatRequest, fastapi_request: Request):
 
                 elif kind == "on_tool_start":
                     name = event.get("name")
+                    input_data = event.get("data", {}).get("input", {})
                     yield {
                         "event": "status",
                         "data": json.dumps({"tool": name, "phase": "start"})
+                    }
+                    yield {
+                        "event": "trace",
+                        "data": json.dumps({
+                            "type": "tool_start",
+                            "tool": name,
+                            "input": input_data,
+                            "node": node_name,
+                            "run_id": run_id,
+                            "timestamp": datetime.now().strftime("%H:%M:%S")
+                        })
                     }
 
                 elif kind == "on_tool_end":
                     name = event.get("name")
                     output = event.get("data", {}).get("output")
                     
-                    # Convert tool output object to dict/primitive if needed
                     if hasattr(output, "content"):
                         raw_output = output.content
                     else:
@@ -167,6 +219,27 @@ async def chat_stream(request: ChatRequest, fastapi_request: Request):
                         "event": "tool_result",
                         "data": json.dumps({"tool": name, "output": raw_output})
                     }
+                    yield {
+                        "event": "trace",
+                        "data": json.dumps({
+                            "type": "tool_end",
+                            "tool": name,
+                            "output": raw_output,
+                            "node": node_name,
+                            "run_id": run_id,
+                            "timestamp": datetime.now().strftime("%H:%M:%S")
+                        })
+                    }
+
+            # Fetch updated student profile for observability panel
+            try:
+                latest_profile = db_get_student_profile(thread_id)
+                yield {
+                    "event": "profile_update",
+                    "data": json.dumps({"profile": latest_profile})
+                }
+            except Exception:
+                pass
 
             yield {
                 "event": "done",

@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import ChatWindow from './components/ChatWindow';
 import StatusIndicator from './components/StatusIndicator';
 import Composer from './components/Composer';
-import { Message, StatusData, InterruptData } from './types';
+import ObservabilityPanel from './components/ObservabilityPanel';
+import { Message, StatusData, InterruptData, TraceEvent, StudentProfile } from './types';
 
 function getThreadId(): string {
   let threadId = localStorage.getItem('tutor_agent_thread_id');
@@ -19,6 +20,9 @@ export default function App() {
   const [activeMessage, setActiveMessage] = useState<Message | null>(null);
   const [currentStatus, setCurrentStatus] = useState<StatusData | null>(null);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [traces, setTraces] = useState<TraceEvent[]>([]);
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
+  const [isObservabilityOpen, setIsObservabilityOpen] = useState<boolean>(true);
 
   const messageQueue = useRef<string[]>([]);
   const activeMessageRef = useRef<Message | null>(null);
@@ -112,6 +116,29 @@ export default function App() {
 
       case 'status': {
         setCurrentStatus(data as StatusData);
+        break;
+      }
+
+      case 'trace': {
+        const traceItem: TraceEvent = {
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          type: data.type,
+          node: data.node,
+          model: data.model,
+          tool: data.tool,
+          input: data.input,
+          output: data.output,
+          timestamp: data.timestamp || new Date().toLocaleTimeString(),
+          run_id: data.run_id,
+        };
+        setTraces((prev) => [traceItem, ...prev]);
+        break;
+      }
+
+      case 'profile_update': {
+        if (data.profile) {
+          setStudentProfile(data.profile);
+        }
         break;
       }
 
@@ -218,25 +245,45 @@ export default function App() {
   };
 
   return (
-    <div className="app-container">
-      <header className="header">
-        <h1>LangChain Tutor Agent</h1>
-        <span className="thread-badge">Thread: {threadId.slice(0, 8)}...</span>
-      </header>
+    <div className="layout-root">
+      <div className="app-container">
+        <header className="header">
+          <div className="header-brand">
+            <h1>LangChain Tutor Agent</h1>
+            <span className="thread-badge">Thread: {threadId.slice(0, 8)}...</span>
+          </div>
+          <button
+            className={`observability-toggle-btn ${isObservabilityOpen ? 'active' : ''}`}
+            onClick={() => setIsObservabilityOpen(!isObservabilityOpen)}
+          >
+            📊 {isObservabilityOpen ? 'Hide Tracing' : 'Show Tracing'}
+            {traces.length > 0 && <span className="trace-count-pill">{traces.length}</span>}
+          </button>
+        </header>
 
-      <ChatWindow
-        messages={messages}
-        activeMessage={activeMessage}
-        onSelectQuizAnswer={handleSelectQuizAnswer}
-        onApproveInterrupt={handleApproveInterrupt}
-      />
+        <ChatWindow
+          messages={messages}
+          activeMessage={activeMessage}
+          onSelectQuizAnswer={handleSelectQuizAnswer}
+          onApproveInterrupt={handleApproveInterrupt}
+        />
 
-      <StatusIndicator status={currentStatus} />
+        <StatusIndicator status={currentStatus} />
 
-      <Composer
-        onSendMessage={handleSendMessage}
-        disabled={isStreaming}
+        <Composer
+          onSendMessage={handleSendMessage}
+          disabled={isStreaming}
+        />
+      </div>
+
+      <ObservabilityPanel
+        traces={traces}
+        profile={studentProfile}
+        isOpen={isObservabilityOpen}
+        onToggle={() => setIsObservabilityOpen(!isObservabilityOpen)}
+        onClearTraces={() => setTraces([])}
       />
     </div>
   );
 }
+
