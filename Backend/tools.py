@@ -110,9 +110,17 @@ def explain_concept(topic: str, student_level: str = "beginner") -> str:
 
 @tool
 def generate_quiz_question(topic: str, difficulty: str = "medium") -> dict:
-    """Generates a multiple-choice quiz question (options A, B, C, D) on a given topic and difficulty."""
+    """Generates a high quality multiple-choice quiz question (options A, B, C, D) on a given topic and difficulty."""
     structured_llm = model.with_structured_output(QuizQuestion)
-    prompt = f"Generate a multiple-choice quiz question with options A, B, C, D on the topic '{topic}' with difficulty '{difficulty}'."
+    prompt = (
+        f"You are creating a multiple-choice quiz question on the topic: '{topic}' with difficulty '{difficulty}'.\n"
+        f"CRITICAL REQUIREMENTS:\n"
+        f"1. Provide exactly four realistic, distinct options labeled 'A', 'B', 'C', and 'D'.\n"
+        f"2. Each option value MUST be actual answer text (e.g. for 'What is the capital of France?', options must be {{\"A\": \"Paris\", \"B\": \"Berlin\", \"C\": \"Rome\", \"D\": \"Madrid\"}}).\n"
+        f"3. Do NOT make the options repetitive placeholders (e.g., do NOT write 'The capital of France', 'The capital of Germany').\n"
+        f"4. Set 'correct_answer' strictly to the option key corresponding to the correct answer (e.g., 'A', 'B', 'C', or 'D').\n"
+        f"5. Provide a clear explanation of why that option is correct."
+    )
     result = structured_llm.invoke(prompt)
     if isinstance(result, QuizQuestion):
         return result.model_dump()
@@ -120,16 +128,19 @@ def generate_quiz_question(topic: str, difficulty: str = "medium") -> dict:
 
 @tool
 def grade_answer(question: str, correct_answer: str, student_answer: str) -> dict:
-    """Grades a student's answer leniently against the specific question and correct answer, providing clear feedback."""
+    """Grades a student's answer against the specific question and correct answer key/text, providing clear feedback."""
     structured_llm = model.with_structured_output(GradeResult)
     prompt = (
-        f"You are grading a quiz response.\n"
-        f"Question asked: {question}\n"
-        f"Expected correct answer key/text: {correct_answer}\n"
-        f"Student's submitted response: {student_answer}\n\n"
-        f"Determine if the student's answer corresponds to the expected correct answer. "
-        f"Be lenient with formatting (e.g. 'B', 'option B',  all match option 'B'). "
-        f"Set 'correct' to true if it matches, otherwise false, and provide concise feedback."
+        f"You are an accurate, encouraging quiz evaluator.\n"
+        f"QUESTION: {question}\n"
+        f"EXPECTED CORRECT ANSWER: {correct_answer}\n"
+        f"STUDENT'S SUBMISSION: {student_answer}\n\n"
+        f"GRADING RULES:\n"
+        f"1. Identify the option letter or text the student chose (e.g., if student says 'I choose answer option A' or 'A' or 'Paris', their chosen answer is 'A' / 'Paris').\n"
+        f"2. Check if their chosen option matches the EXPECTED CORRECT ANSWER ({correct_answer}).\n"
+        f"3. If they match: set 'correct' to true, set 'feedback' praising them concisely, and set 'correct_answer' to '{correct_answer}'.\n"
+        f"4. If they do NOT match: set 'correct' to false, set 'feedback' explaining what their choice was and why '{correct_answer}' is the correct answer.\n"
+        f"5. DO NOT invent or swap the student's answer (if the student selected A, do not say they selected B)."
     )
     result = structured_llm.invoke(prompt)
     if isinstance(result, GradeResult):
